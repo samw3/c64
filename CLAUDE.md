@@ -90,4 +90,4 @@ Useful ramps:
 - `$D018` selects the screen in 1K steps and the bitmap in 8K steps (or the charset in 2K steps). Use `d018()`.
 - A plain raster IRQ jitters by up to 7 cycles (it depends on the instruction it interrupts), and the captures show it. If an edge must not wobble, use a stable handler; see Raster timing.
 - The testcard (`scenes/testcard`) is the reference for a working IRQ chain, sprites and color RAM.
-- `scenes/afterglow` is the reference for a cycle-exact per-line kernel (`$D021`/`$D016` on every line, badlines included), a per-line-background encoder, and per-frame animation records.
+- `scenes/afterglow` is the reference for a cycle-exact per-line kernel (`$D021`/`$D016` on every line, badlines included), keeping it exact under sprite DMA (its `Section` macro), a per-line-background encoder, and per-frame animation records.

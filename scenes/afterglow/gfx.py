@@ -8,8 +8,10 @@ so every line has its own %00 color:
   lake  a mirror of everything above it, on a black %00. Per-frame records (64-frame loop)
         light ripple lines in that black and set each line's xscroll, so the reflection
         shimmers and wobbles. Stars twinkle from color RAM.
+  reeds hires sprites 3-7 in front of the lake: sprites ignore xscroll, so the water
+        moves behind them while they stand still.
 Painting is procedural (numpy): banded sky, faceted rock lit from the afterglow, snow,
-mist, pines, the reflection, the reed bank. `encode` then fits each 4x8 cell to bg[y]
+mist, pines, the reflection, the reeds. `encode` then fits each 4x8 cell to bg[y]
 plus 3 colors, with bg chosen per line to minimise clash.
 
 Coordinates: x 0..159 multicolor pixels, y 0..199 lines. With 38 columns and xscroll 4 the
@@ -23,12 +25,13 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from harness.gfx import COLODORE, Bank, d018, pack_mc_bitmap, write  # noqa: E402
+from harness.gfx import COLODORE, Bank, d018, pack_mc_bitmap, sprite_hires, sprite_pointer, write  # noqa: E402
 from PIL import Image  # noqa: E402
 
 W, H = 160, 200
 Y_H = 120                          # waterline: a cell boundary, so the mirror keeps cell rows intact
-Y_SHORE = 189                      # near shore
+Y_BANK = 187                       # near shore: solid black from here down (the kernel stops here)
+SPR_TOP = 169                      # first line of the reed sprites (21 lines, down into the bank)
 XC = 94                            # afterglow centre, in the valley between the mountains
 PX = 2 * 0.936                     # width of a multicolor pixel in line heights (PAL aspect)
 
@@ -266,7 +269,8 @@ for y in range(Y_H, H):
     d = y - Y_H
     row = np.roll(sky_part[2 * Y_H - 1 - y], int(round(shift[y] * (0.5 + d / 22))))
     row[row == 8] = 4                                       # the rose reflects as plain purple
-    gaps = noise1d(W, 5 + d / 5, 3, seed=200 + y) < -0.7 + min(d, 50) / 110
+    calm = max(0, y - (SPR_TOP - 4)) / 12                   # fewer dark gaps behind the reeds
+    gaps = noise1d(W, 5 + d / 5, 3, seed=200 + y) < -0.7 + min(d, 32) / 110 - calm
     gaps &= (np.abs(x1 - XC) > 5 + d * 0.28) | (noise1d(W, 3, 2, seed=400 + y) < -0.6)
     row[gaps] = 0
     pic[y] = row
@@ -276,7 +280,7 @@ for y in range(Y_H + 1, Y_H + 30):
         x = CAB_X + int(rng.integers(-1, 2) if y > Y_H + 8 else 0)
         pic[y, x] = 7 if y < Y_H + 12 else 10
 # glitter path under the afterglow
-for y in range(Y_H + 1, Y_SHORE):
+for y in range(Y_H + 1, Y_BANK):
     d = y - Y_H
     spread = 4 + d * 0.32
     for _ in range(4):
@@ -287,33 +291,70 @@ for y in range(Y_H + 1, Y_SHORE):
             seg[np.isin(seg, [10, 7, 1])] = 1 if rng.random() < 0.3 - d / 300 else 7
 
 # ------------------------------------------------------------------ near shore
-# A low bank with clumps of reeds and cattails, silhouetted against the bright reflection.
-CLUMPS = [(2, 13, 8), (50, 8, 4), (124, 10, 6), (156, 9, 5)]               # (x, width, height)
-bank_top = Y_SHORE + 1.5 * noise1d(W, 14, 3, seed=9)
-for cx, cw, ch in CLUMPS:
-    bank_top -= ch * np.exp(-((x1 - cx) / cw) ** 2)
-fg = yy >= bank_top[None, :]
-
-
-def blade(x, h, lean):
-    base = int(bank_top[int(np.clip(x, 0, W - 1))]) + 1
-    for k in range(int(h)):
-        bx = int(round(x + lean * k * k / h))
-        if 0 <= bx < W:
-            fg[base - k, bx] = True
-
-
-for _ in range(130):
-    x = rng.uniform(0, W)
-    clump = max(np.exp(-((x - cx) / cw) ** 2) for cx, cw, _ in CLUMPS)
-    if rng.random() < 0.25 + clump:
-        blade(x, rng.uniform(1, 4) + clump * rng.uniform(4, 12), rng.uniform(-0.3, 0.3))
-for x, h in [(117, 17), (122, 23), (128, 15), (47, 13), (53, 17), (8, 19)]:   # cattails
-    blade(x, h, 0.08)
-    base = int(bank_top[x]) + 1
-    fg[base - h + 1:base - h + 5, x] = True
-    fg[base - h + 2:base - h + 4, x + 1] = True
+# The bitmap's bank is solid black with a straight edge: shifting it sideways changes nothing,
+# so the wobble doesn't show. The reeds are hires sprites 3-7 in front of it: sprites ignore
+# xscroll, so they stand still while the lake moves behind them.
+fg = yy >= Y_BANK
 pic[fg] = 0
+
+
+def reed_clump(width, seed, mound, reeds, cattails, blades):
+    """A clump of reeds on a mound, as a (21, width) silhouette; rows 18-20 lie on the bank."""
+    r = np.random.default_rng(seed)
+    c = np.zeros((21, width), bool)
+    x = np.arange(width)
+    cx = width / 2 + r.uniform(-3, 3)
+    ground = 18.5 - mound * np.exp(-((x - cx) / (width * 0.3)) ** 2) + 0.7 * noise1d(width, 4, 2, seed=seed)
+    c[np.arange(21)[:, None] >= ground[None, :]] = True
+
+    def stem(x0, h, lean, w0=1, droop=0.0):
+        """A stalk from the ground, w0 pixels wide at the base, 1 at the tip; leans as it rises."""
+        base = ground[int(np.clip(x0, 0, width - 1))] + 1
+        top = None
+        for k in np.arange(0, h, 0.5):
+            t = k / h
+            px = x0 + lean * t * t * h + droop * max(0, t - 0.7) ** 2 * h * 6
+            py = base - k + droop * max(0, t - 0.7) ** 2 * h * 3
+            w = w0 if t < 0.55 else 1
+            iy, ix = int(round(py)), int(round(px - (w - 1) / 2))
+            if 0 <= iy < 21:
+                c[iy, max(0, ix):max(0, min(width, ix + w))] = True
+            top = (px, py)
+        return top
+
+    def spread(sigma):
+        return cx + r.normal(0, width * sigma)
+
+    for _ in range(blades):                                  # grass: a dense base, leaning outwards
+        x0 = spread(0.24)
+        d = 1 if x0 > cx else -1
+        stem(x0, r.uniform(3, 9), d * r.uniform(0.3, 1.6), w0=2 if r.random() < 0.4 else 1)
+    for _ in range(reeds):                                   # tall reeds, some bending over at the top
+        x0 = spread(0.16)
+        stem(x0, r.uniform(11, 18), r.uniform(-0.3, 0.3), w0=2,
+             droop=(1 if x0 > cx else -1) * r.uniform(0.4, 1.0) if r.random() < 0.5 else 0.0)
+    for _ in range(cattails):                                # cattails: stalk, fat head, thin spike
+        x0 = spread(0.14)
+        h = r.uniform(14, 18.5)
+        px, py = stem(x0, h, r.uniform(-0.15, 0.15), w0=2)
+        hx, hy = int(round(px)) - 1, int(round(py)) + 2
+        c[max(0, hy):hy + 5, max(0, hx):hx + 3] = True
+        c[max(0, hy):hy + 5:4, max(0, hx):hx + 3:2] = False      # rounded ends
+    return c
+
+
+CLUMPS = [  # (frame column of the left edge, sprites wide, mound, reeds, cattails, blades)
+    (36, 2, 7, 6, 2, 24),            # left corner
+    (186, 1, 1.5, 3, 1, 3),          # a few tall stems in front of the glitter path
+    (262, 2, 6, 5, 2, 20),           # at the path's right edge, against the purple
+]
+reed_sprites, spr_x = [], []
+for k, (col, n, mound, reeds, cattails, blades) in enumerate(CLUMPS):
+    clump = reed_clump(24 * n, 900 + k, mound, reeds, cattails, blades)
+    for j in range(n):
+        reed_sprites.append(clump[:, 24 * j:24 * j + 24])
+        spr_x.append(col - 8 + 24 * j)                       # sprite X = frame column - 8
+assert len(reed_sprites) == 5, "the kernel is built for sprites 3-7"
 
 # ------------------------------------------------------------------ background per line
 
@@ -430,18 +471,32 @@ def decode(codes, screen, cram, bg):
     return out
 
 
+out = Path(sys.argv[1])
+out.mkdir(parents=True, exist_ok=True)
+shown = decode(codes, screen, cram, bg)
+
+
+def with_reeds(img):
+    """Hires (200, 320) view with the reed sprites on top, at the base xscroll."""
+    hi = np.asarray(img, np.uint8).repeat(2, 1).copy()
+    for spr, x in zip(reed_sprites, spr_x):
+        for row in range(21):
+            for b in range(24):
+                p = x + 8 + b - 36
+                if spr[row, b] and 0 <= p < 320:
+                    hi[SPR_TOP + row, p] = 0
+    return hi
+
+
 def save_png(img, path):
-    """Indexed PNG at 320x200 (each multicolor pixel 2 wide), colodore palette."""
-    im = Image.fromarray(np.asarray(img, np.uint8).repeat(2, 1), "P")
+    """Indexed PNG at 320x200, colodore palette."""
+    im = Image.fromarray(img, "P")
     im.putpalette([v for rgb in COLODORE for v in rgb])
     im.save(path)
 
 
-out = Path(sys.argv[1])
-out.mkdir(parents=True, exist_ok=True)
-shown = decode(codes, screen, cram, bg)
-save_png(pic, out / "paint.png")
-save_png(shown, out / "encoded.png")
+save_png(with_reeds(pic), out / "paint.png")
+save_png(with_reeds(shown), out / "encoded.png")
 if clash:
     print(f"clash: {len(clash)} cells, {int((shown != pic).sum())} pixels moved to the nearest luma "
           f"(see paint.png vs encoded.png)")
@@ -451,16 +506,24 @@ if clash:
 # Two waves roll towards the viewer; their spacing and height grow with perspective.
 d = np.arange(WATER_LINES, dtype=float)
 depth_ph = 2 * np.pi * 5.0 * (d / WATER_LINES) ** 0.6           # wave phase down the lake
-amp = np.clip(0.25 + d * 0.06, 0, 3.0) * np.clip((72 - d) / 20, 0.35, 1)   # calmer by the reeds
+amp = np.clip(0.25 + d * 0.06, 0, 3.0)
 records = []
 for t in range(FRAMES):
     ph = 2 * np.pi * t / FRAMES
     wave = 0.7 * np.sin(depth_ph - ph) + 0.3 * np.sin(2.3 * depth_ph - 3 * ph + 1.3)
     xs = np.clip(4 + np.round(amp * wave), 0, 7).astype(np.uint8)
     crest = np.sin(depth_ph - ph + 0.6) > 0.93 - 0.12 * d / WATER_LINES
-    lake = np.where(crest & (d > 1), 6, 0).astype(np.uint8)
+    # no ripples on the bank: the kernel stops there and its last background stays for the
+    # rest of the frame, under bank cells that had no color left for black
+    lake = np.where(crest & (d > 1) & (d < Y_BANK - Y_H), 6, 0).astype(np.uint8)
     records.append(np.concatenate([lake << 4 | xs, np.zeros(len(stars), np.uint8)]))
 records = np.array(records)
+# Under the reed sprites the kernel can't store a background on the line after a badline: that
+# line keeps the badline's (see main.asm). Plan the same here.
+for n in range(51 + SPR_TOP, 51 + SPR_TOP + 21):
+    if (n & 7) == 3 and Y_H < n - 51 + 1 < Y_BANK:
+        i = n - 51 - Y_H
+        records[:, i + 1] = records[:, i + 1] & 0x0F | records[:, i] & 0xF0
 
 # twinkling: each star wanders between grey levels, with brief white flashes
 LEVELS = [11, 12, 15, 1]
@@ -477,7 +540,10 @@ star_cells = [(y // 8) * 40 + x // 4 for x, y in stars]
 assert len(set(star_cells)) == len(star_cells), "two stars share a cell"
 cram[star_cells] = records[0, WATER_LINES:]
 
+REEDS = 0x59C0                     # 5 sprites, 64-byte aligned, just below the bg table
 bank = Bank()
+bank.put(REEDS, b"".join(sprite_hires(spr.astype(np.uint8)) for spr in reed_sprites), "reed sprites 3-7")
+bank.put(SCREEN + 0x3FB, bytes(sprite_pointer(REEDS + 64 * k) for k in range(5)), "sprite pointers 3-7")
 bank.put(ANIM, records, f"animation: {FRAMES} frames x {RECORD} bytes")
 bank.put(BGTAB, bg, "bg per line")
 bank.put(SCREEN, screen, "screen RAM")
@@ -496,4 +562,8 @@ write(out, bank, cram, {
     "GFX_STAR_HI": [(0xD800 + c) >> 8 for c in star_cells],
     "GFX_BG": int(bg[0]),
     "GFX_BORDER": 0,
+    "GFX_BANK_Y": Y_BANK,
+    "GFX_SPR_Y": SPR_TOP + 50,
+    "GFX_SPR_X": [x & 0xFF for x in spr_x],
+    "GFX_SPR_MSB": sum(1 << (3 + k) for k, x in enumerate(spr_x) if x > 255),
 })

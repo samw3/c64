@@ -7,6 +7,7 @@
 #   make probe SCENE=x AT="lbl ..."    raster line/cycle where code labels run (jitter check)
 #   make new SCENE=x                   start a scene from scenes/_template
 #   make test                          end-to-end harness tests
+#   make showcase                      README images from a fresh capture of afterglow (needs ffmpeg)
 
 SCENE  ?= testcard
 FRAMES ?= 4
@@ -25,7 +26,7 @@ IMAGE    := $(BUILD)/image.prg
 
 export PYTHONPATH := $(ROOT)
 
-.PHONY: all image capture crt inspect probe new test setup clean
+.PHONY: all image capture crt inspect probe new test showcase setup clean
 all: image
 image: $(IMAGE)
 
@@ -62,6 +63,15 @@ new:
 
 test:
 	$(PY) -m unittest discover -s tests -v
+
+# CRT view: one palette for the whole loop, ordered dither (no shimmer between frames), only
+# the changed rectangle per frame. Exact frames: the indexed 2x copies keep the C64 palette.
+showcase:
+	$(MAKE) capture SCENE=afterglow FRAMES=64 CRT=1
+	ffmpeg -v error -y -framerate 50 -i out/afterglow/crt/%03d.png -loop 0 \
+		-vf "split[a][b];[a]palettegen=stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
+		docs/afterglow-crt.gif
+	ffmpeg -v error -y -framerate 50 -i out/afterglow/zoom/%03d.png -loop 0 docs/afterglow.gif
 
 setup:
 	tools/setup.sh

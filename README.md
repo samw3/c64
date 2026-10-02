@@ -1,5 +1,7 @@
 # C64 graphics harness
 
+![Afterglow: a mountain lake at twilight, in the harness's PAL monitor view](docs/afterglow-crt.png)
+
 An agent-friendly loop for Commodore 64 graphics:
 
 1. Build a **scene image**: one `.prg` holding the 16K VIC bank, the VIC-II shadow registers, color RAM, and a raster routine of up to 4K.
@@ -17,6 +19,23 @@ A capture takes about 0.1 s: launch, power-on boot, injection, READY, and 8 fram
 
 Requirements: a C toolchain, Java 17+, and Python 3 with Pillow and numpy. Tested on macOS 26 (arm64).
 
+## Showcase: Afterglow
+
+`scenes/afterglow` is a mountain lake at twilight, made entirely in this loop. The picture at the top is the CRT view of frame 0. Below are the exact frames VICE captured (2×), a seamless 64-frame loop. `build/afterglow/run.prg` autostarts in a PAL emulator.
+
+![Afterglow: 64 captured frames at 2x](docs/afterglow.gif)
+
+- **Per-line background.** A stable raster IRQ (CIA timer, line 49) starts a cycle-exact kernel over all 200 display lines. On every line it writes `$D021` and `$D016` in the right border, badlines included. The sky's gradient bands are background color, so each cell's three colors stay free for the moon, snow, clouds and rock.
+- **PAL mixing.** The rose band under the purple is purple and orange on alternating lines. The two share a luma level, so a PAL delay line blends them into a color the palette doesn't have. Compare `frames/` with `crt/`.
+- **A moving lake.** The water is a mirror on a black background. Each frame the kernel gets new xscroll values per lake line (two waves rolling toward the viewer, so the reflection wobbles) and ripple lines that light up the black. Black that must stay dark, like the reed bank and parts of the reflection, comes from a cell color instead, so the ripples break into glints.
+- **Stars** twinkle from color RAM. The animation is 64 records (6.4K) in the VIC bank's free space, copied in during the lower border in about 3,200 cycles.
+- **Painting** is procedural numpy in `gfx.py`: a banded sky, rock faceted by ridge spurs and lit from the glow, alpenglow snow, mist, pines, the reflection and the reeds. An encoder in the scene fits each 4×8 cell to its lines' backgrounds plus three colors, and chooses each line's background to minimize clash. 89 of 32,000 pixels fall back to the nearest luma.
+
+```sh
+make capture SCENE=afterglow FRAMES=64 CRT=1        # 64 unique frames, loops every 64
+make probe SCENE=afterglow AT="row done animated"   # kernel rows on cycle 10, lower-border work ends by line 302
+```
+
 ## Layout
 
 | Path | What |
@@ -27,6 +46,8 @@ Requirements: a C toolchain, Java 17+, and Python 3 with Pillow and numpy. Teste
 | `scenes/<name>/` | A scene: `main.asm` (code + VIC setup) and an optional `gfx.py` (writes the bank and color RAM) |
 | `scenes/_template/` | Starting point for `make new SCENE=<name>` |
 | `scenes/testcard/` | Exercises every path; the tests check its pixels |
+| `scenes/afterglow/` | The showcase: a per-line `$D021`/`$D016` kernel, PAL mixing, a 64-frame lake animation |
+| `docs/` | README images (regenerate from `out/afterglow/` after a capture) |
 | `tools/setup.sh` | Builds VICE and fetches KickAssembler into `tools/` (nothing is installed system-wide) |
 | `build/<scene>/` | `image.prg`, `run.prg`, `main.vs` (VICE labels), generated data |
 | `out/<scene>/` | Capture results |

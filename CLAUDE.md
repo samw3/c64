@@ -91,3 +91,4 @@ Useful ramps:
 - A plain raster IRQ jitters by up to 7 cycles (it depends on the instruction it interrupts), and the captures show it. If an edge must not wobble, use a stable handler; see Raster timing.
 - The testcard (`scenes/testcard`) is the reference for a working IRQ chain, sprites and color RAM.
 - `scenes/afterglow` is the reference for a cycle-exact per-line kernel (`$D021`/`$D016` on every line, badlines included), keeping it exact under sprite DMA (its `Section` macro), a per-line-background encoder, and per-frame animation records.
+- `scenes/ambush` is the reference for hires-over-multicolor sprite pairs (`hero.txt`, checked by `art.hero_layers`), more animation frames than the bank holds (a mirrored store at `$9000`, double-buffered slots), and a scripted per-frame sprite timeline compressed into streams (`director.py`, `gfx.py`).

@@ -7,7 +7,7 @@
 #   make probe SCENE=x AT="lbl ..."    raster line/cycle where code labels run (jitter check)
 #   make new SCENE=x                   start a scene from scenes/_template
 #   make test                          end-to-end harness tests
-#   make showcase                      README images from a fresh capture of afterglow (needs ffmpeg)
+#   make showcase                      README images (+ docs/ambush.prg) from fresh captures of afterglow and ambush (needs ffmpeg)
 
 SCENE  ?= testcard
 FRAMES ?= 4
@@ -72,6 +72,9 @@ showcase:
 		-vf "split[a][b];[a]palettegen=stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
 		docs/afterglow-crt.gif
 	ffmpeg -v error -y -framerate 50 -i out/afterglow/zoom/%03d.png -loop 0 docs/afterglow.gif
+	$(MAKE) capture SCENE=ambush FRAMES=512
+	ffmpeg -v error -y -framerate 50 -i out/ambush/zoom/%03d.png -loop 0 docs/ambush.gif
+	cp build/ambush/run.prg docs/ambush.prg
 
 setup:
 	tools/setup.sh

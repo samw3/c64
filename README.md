@@ -37,6 +37,24 @@ make capture SCENE=afterglow FRAMES=64 CRT=1        # 64 unique frames, loops ev
 make probe SCENE=afterglow AT="row section animated" # rows on cycle 10, sprite section from line 218, done by line 292
 ```
 
+## Showcase: Ambush
+
+`scenes/ambush` is a forest battle: a hero with a sword against five creatures, in a seamless 512-frame (10 s) loop built from the 8 hardware sprites without multiplexing. These are the exact frames at 2×. **Click the animation to run it in your browser**: it opens `docs/ambush.prg` in floooh's [tiny8bit](https://floooh.github.io/tiny8bit/) C64 emulator, which loads and runs it after the boot screen. `docs/ambush.prg` (a copy of `build/ambush/run.prg`) also autostarts in any PAL emulator.
+
+[![Ambush: one 512-frame loop at 2x. Click to run it in a browser emulator](docs/ambush.gif)](https://floooh.github.io/tiny8bit/c64.html?file=https://raw.githubusercontent.com/samw3/c64/main/docs/ambush.prg)
+
+- **An overlay hero.** Sprite 0 is a hires black layer over sprite 1, a multicolor body at the same position. The outline, the eye and black dither shading are at full resolution over the light red, yellow and light blue fills. Each of the 13 poses is drawn as one 24-pixel picture in `hero.txt`: fills must agree within each multicolor pixel pair, and black can go anywhere.
+- **The sword is its own sprite** (sprite 2). It sits behind the hero, so his fist covers the grip. Blades are generated at clean 1:1 and 2:1 pixel slopes, plus swing smears and impact bursts. Each pose names its fist position and blade angle, and the timeline hangs the grip on the fist, mirrored when he turns.
+- **Five creatures** (sprites 3–7): a wolf, an imp, a spider, a bat and a fire wisp. They share light red and yellow as `$D025`/`$D026`, and each has idle, attack, hurt and defeat animations. A hit freezes both fighters for 4 frames: the victim flashes white, the blade flashes gold with a burst, and the screen shakes. The shake moves xscroll and yscroll, with 38 columns and 24 rows hiding the edges, and the sprites move along.
+- **Sprite streaming.** The image holds 73 source frames, each stored once facing right. At init they are unpacked into a 100-frame store at `$9000`, mirrored where the timeline needs them facing left. Each hardware sprite owns two slots in the bank. A changed frame is copied into the free slot, and the pointer flips in the lower border.
+- **A compressed timeline.** `director.py` scripts every sprite on every frame, as clips with eased moves, ballistic arcs and shared hit times. `gfx.py` turns that into 42 channels: positions as deltas, frames, colors, `$D015`, `$D01B`, the scroll registers, and 10 sparkle motes poked into color RAM. The channels are coded as runs and back-references (2.7K for 512 frames), and each is checked against a Python model of the 6502 decoder. The main loop decodes the next frame while the current one is displayed, and an IRQ in the lower border applies it.
+- **Painting** is procedural numpy in `forest.py`: misty haze, far and near trunks, light shafts, a backlit canopy, a mossy floor with a path, and framing trunks and ferns. Behind the fight it stays mid-to-light, so the black silhouettes read. `build/ambush/sprites.png` shows every sprite frame.
+
+```sh
+make capture SCENE=ambush FRAMES=512 CRT=1        # 511 unique frames (one quiet moment repeats), loops every 512
+make probe SCENE=ambush AT="irq next_frame nf_done" # IRQ on line 250; the next frame is ready by line 154 at the latest
+```
+
 ## Layout
 
 | Path | What |
@@ -48,7 +66,8 @@ make probe SCENE=afterglow AT="row section animated" # rows on cycle 10, sprite 
 | `scenes/_template/` | Starting point for `make new SCENE=<name>` |
 | `scenes/testcard/` | Exercises every path; the tests check its pixels |
 | `scenes/afterglow/` | The showcase: a per-line `$D021`/`$D016` kernel (sprite-aware), PAL mixing, a 64-frame lake animation |
-| `docs/` | README images: `make showcase` recaptures afterglow and rebuilds them (needs ffmpeg) |
+| `scenes/ambush/` | A forest battle: a hires-over-multicolor hero, a sword sprite, five creatures, sprite streaming, a compressed per-frame timeline |
+| `docs/` | README images and the playable `ambush.prg`: `make showcase` recaptures afterglow and ambush and rebuilds them (needs ffmpeg) |
 | `tools/setup.sh` | Builds VICE and fetches KickAssembler into `tools/` (nothing is installed system-wide) |
 | `build/<scene>/` | `image.prg`, `run.prg`, `main.vs` (VICE labels), generated data |
 | `out/<scene>/` | Capture results |
